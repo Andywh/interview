@@ -1,0 +1,50 @@
+介绍5种IO模型
+ps: 做到能结合图说明
+
+对于一个network IO 发生时，它会涉及到两个系统对象，一个是调用这个 IO 的process（or thread），另一个就是系统内核（kernel）。当一个 read 操作发生时，它会经历两个阶段：
+1）等待数据准备（Waiting for the data to be ready）
+2）将数据从内核拷贝到进程中（Copying the data from the kernel to the process）
+
+
+1. 阻塞IO blocking IO 
+当用户进程调用了 recvfrom 这个系统调用，kernel 就开始了 IO 的第一个阶段：准备数据。对于 network io 来说，很多时候数据在一开始还没有到达(比如，还没有收到一个完整的 UDP 包)，这个时候 kernel 就要等待足够的数据到来。而在用户进程这边，整个进程会被阻塞。当 kernel 一直等到数据准备好了，它就会将数据从 kernel 中拷贝到用户内存，然后 kernel 返回结果，用户进程才解除 block 的状态，重新运行起来。
+
+
+2. 非阻塞IO nonblocking IO 
+当用户进程发起系统调用的时候，如果 kernel 中的数据没有准备好，那么它不会阻塞用户进程，而是立刻返回一个error。从用户角度来讲，它发起一个系统调用之后，并不需要等待，而是马上得到了一个结果。用户进程判断结果是一个 error 时，它就知道数据还没有准备好，于是它就可以再次发送系统调用。一旦 kernel 中的数据准备好了，并且又再次收到了用户进程的系统调用，那么它马上就将数据拷贝到了用户内存，然后返回。
+
+用如下的函数可以将某句柄 fd 设置为非阻塞状态
+fcntl(fd, F_SETFL, O_NONBLOCK);
+
+非阻塞的接口相比于阻塞型接口的显著差异在于，在被调用之后立即返回。
+
+3. 多路复用IO multiplexing 
+有些地方也称这种 IO 方式为事件驱动IO（event driven IO）。select/epoll 的好处就在于单个 process 就可以同时处理多个网络连接的 IO。它的基本原理就是 select/epoll这个 function 会不断的轮询所负责的所有 socket，当某个socket有数据到达了，就通知用户进程。
+
+它会调用两个系统调用，select 和 相应的 read or recvfrom 系统函数
+
+当用户进程调用了 select，那么整个进程就会被 block，而同时，kernel会"监视"所有 select 负责的 socket，当任何一个 socket 中的数据准备好了，select 就会返回。这个时候用户进程再调用 read 操作，讲数据从 kernel 拷贝到用户进程。
+
+优缺点：
+相对于阻塞 IO 而言，多路复用 IO 会使用两个系统调用（select 和 ？），如果处理的连接数不是很高的话，那么使用 slect/epoll 的 web server 不一定比使用 multi-threading + blocking IO 的 web server 性能更好，可能延迟更大。select/epoll 的优势并不是对于单个连接能处理得更快，而是在于能处理更多的连接。
+
+总结：
+事件驱动适合于IO密集型服务，多进程或多线程适合于CPU密集型服务，它们各有各的优势，并不存在谁取代谁的倾向。
+
+4. 信号驱动IO signal driven IO 
+
+
+
+5. 异步 asynchronous IO 
+从内核 2.6 版本才开始引入
+当用户进程发起 read 操作之后，立即就可以开始去做其他的事。而另一方面，从 kernel 的角度，当它收到一个 asynchronous read 之后，首先它会立即返回，所以不会对用户进程产生任何 block。然后，kernel 会等待数据准备完成，然后将数据拷贝到用户内存，当这一切都完成之后，kernel 会给用户进程发送一个 signal，告诉它 read 操作完成了。
+
+
+5 种网络IO对比
+只有异步IO才是全程非阻塞，其他 4 种都是同步IO。
+阻塞IO编程简单，这种方式使用很广泛，但是效率较低。
+非阻塞IO效率较高，但是编程较复杂，有开发语言和代码库支持就简单多了。
+多路复用非阻塞IO效率比非阻塞IO更高，在大规模的网络IO处理中尤其明显，支持的程序也越来越多。
+
+异步IO效率很高，但是编程很复杂。node.js 中使用的就是异步IO。
+
